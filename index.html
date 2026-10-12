@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>彩虹勇者地下城</title>
+
+<style>
+*{box-sizing:border-box}
+
+body{
+  margin:0;
+  padding:20px 10px;
+  background:#171827;
+  color:white;
+  font-family:Arial,"Microsoft JhengHei",sans-serif;
+  text-align:center;
+}
+
+h1{color:#ffd166}
+
+.info{line-height:2;margin:15px 0}
+
+#map{
+  display:grid;
+  justify-content:center;
+  gap:2px;
+  width:max-content;
+  max-width:100%;
+  margin:20px auto;
+  padding:8px;
+  background:#25263b;
+  border-radius:12px;
+  overflow:auto;
+}
+
+.cell{
+  width:clamp(19px,4.5vw,32px);
+  height:clamp(19px,4.5vw,32px);
+  display:flex;
+  justify-content:center;
+  align-items:center;
+  font-size:clamp(12px,3vw,20px);
+  border-radius:3px;
+}
+
+.wall{background:#565a75}
+.floor{background:#303249;color:#555b70}
+
+.player{
+  font-size:24px;
+  font-weight:bold;
+  animation:rainbow .8s linear infinite;
+}
+
+@keyframes rainbow{
+  0%{color:#ff3333;text-shadow:0 0 10px red}
+  17%{color:#ff9900;text-shadow:0 0 10px orange}
+  33%{color:#ffff33;text-shadow:0 0 10px yellow}
+  50%{color:#33ff66;text-shadow:0 0 10px lime}
+  67%{color:#33ccff;text-shadow:0 0 10px cyan}
+  83%{color:#cc66ff;text-shadow:0 0 10px violet}
+  100%{color:#ff3333;text-shadow:0 0 10px red}
+}
+
+.enemy{color:#ff6666}
+.exit{color:#ffe066}
+.spring{color:#66ffcc;font-size:20px}
+
+#message{
+  min-height:30px;
+  color:#ffd166;
+  font-weight:bold;
+  margin:12px;
+}
+
+.controls{
+  display:grid;
+  grid-template-columns:repeat(3,65px);
+  gap:5px;
+  justify-content:center;
+  margin:15px auto;
+}
+
+button{
+  border:none;
+  border-radius:10px;
+  padding:13px 18px;
+  margin:4px;
+  background:#555b8e;
+  color:white;
+  font-size:18px;
+  cursor:pointer;
+  touch-action:manipulation;
+}
+
+button:active{background:#8188cf}
+
+.controls button{
+  width:65px;
+  height:55px;
+  margin:0;
+  padding:0;
+}
+
+#restart{background:#a04e82}
+</style>
+</head>
+
+<body>
+
+<h1>🌈 彩虹勇者地下城</h1>
+
+<div class="info">
+  <span id="level">第 1 層</span>
+  <br>
+  ❤️ 生命：<span id="hp">10</span>
+ 　
+  👾 剩餘敵人：<span id="enemies">0</span>
+  <br>
+  <small>使用 WASD、方向鍵或下方按鈕移動</small>
+</div>
+
+<div id="map"></div>
+<div id="message">找到出口 🚪，前往下一層！</div>
+
+<div class="controls">
+  <span></span>
+  <button onclick="move(0,-1)">⬆️</button>
+  <span></span>
+  <button onclick="move(-1,0)">⬅️</button>
+  <button onclick="move(0,1)">⬇️</button>
+  <button onclick="move(1,0)">➡️</button>
+</div>
+
+<button id="restart" onclick="restartGame()">🔄 重新開始</button>
+
+<script>
+/*
+  地圖符號：
+  # = 牆壁
+  . = 通道
+  P = 玩家起點
+  E = 敵人
+  X = 出口
+
+  三層地圖全部固定為 15 格寬，
+  避免座標與畫面不一致。
+*/
+
+const maps = [
+  // 第一層
+  [
+    "###############",
+    "#P....#.......#",
+    "#.##..#..##...#",
+    "#.....#.......#",
+    "###.#####.##..#",
+    "#...#....E....#",
+    "#...#..##.....#",
+    "#.............#",
+    "#.###.....###.#",
+    "#.........X...#",
+    "###############"
+  ],
+
+  // 第二層：重新整理通道，所有路線均連通
+  [
+    "###############",
+    "#P....#.......#",
+    "#.##..#..##...#",
+    "#.....#.......#",
+    "###.###.###...#",
+    "#...E...#.....#",
+    "#.#####.#.###.#",
+    "#.......#.....#",
+    "#.###...###...#",
+    "#...........X.#",
+    "###############"
+  ],
+
+  // 第三層：敵人較多，挑戰更高
+  [
+    "###############",
+    "#P....#.......#",
+    "#.##..#.###...#",
+    "#.....#.......#",
+    "###.###.###.###",
+    "#...E...#.....#",
+    "#.#####.#.###.#",
+    "#.......#.....#",
+    "#.###...###...#",
+    "#......E....X.#",
+    "###############"
+  ]
+];
+
+let grid = [];
+let player = {x:1,y:1};
+let enemies = [];
+let springs = [];
+let level = 0;
+let hp = 10;
+let gameOver = false;
+
+// 開始遊戲
+function restartGame(){
+  level = 0;
+  hp = 10;
+  gameOver = false;
+  loadLevel();
+}
+
+// 載入地圖
+function loadLevel(){
+  grid = maps[level].map(row => row.split(""));
+  enemies = [];
+  springs = [];
+
+  // 確認每一列長度一致
+  const width = grid[0].length;
+
+  for(let y=0;y<grid.length;y++){
+    if(grid[y].length !== width){
+      throw new Error("地圖第 "+(y+1)+" 列的寬度不一致");
+    }
+  }
+
+  for(let y=0;y<grid.length;y++){
+    for(let x=0;x<grid[y].length;x++){
+      if(grid[y][x] === "P"){
+        player = {x,y};
+        grid[y][x] = ".";
+      }
+
+      if(grid[y][x] === "E"){
+        enemies.push({
+          x,
+          y,
+          hp: level + 1
+        });
+        grid[y][x] = ".";
+      }
+    }
+  }
+
+  // 設置回血泉，只放在可通行的地板上
+  const candidates = [
+    {x:3,y:3},
+    {x:7,y:7},
+    {x:11,y:8}
+  ];
+
+  for(const p of candidates){
+    if(
+      grid[p.y] &&
+      grid[p.y][p.x] === "." &&
+      !enemies.some(e => e.x === p.x && e.y === p.y) &&
+      !(player.x === p.x && player.y === p.y)
+    ){
+      springs.push({...p});
+    }
+  }
+
+  render();
+  say("第 "+(level+1)+" 層：尋找出口，小心敵人！");
+}
+
+// 更新提示
+function say(text){
+  document.getElementById("message").textContent = text;
+}
+
+// 繪製地圖
+function render(){
+  const mapEl = document.getElementById("map");
+  mapEl.innerHTML = "";
+
+  mapEl.style.gridTemplateColumns =
+    `repeat(${grid[0].length},auto)`;
+
+  for(let y=0;y<grid.length;y++){
+    for(let x=0;x<grid[y].length;x++){
+      const cell = document.createElement("div");
+      cell.className = "cell";
+
+      const enemy = enemies.find(e => e.x===x && e.y===y);
+      const spring = springs.find(s => s.x===x && s.y===y);
+
+      if(player.x===x && player.y===y){
+        cell.textContent = "@";
+        cell.classList.add("player");
+      }
+      else if(enemy){
+        cell.textContent = "👾";
+        cell.classList.add("enemy");
+      }
+      else if(spring){
+        cell.textContent = "♨";
+        cell.classList.add("spring");
+      }
+      else if(grid[y][x] === "#"){
+        cell.textContent = "";
+        cell.classList.add("wall");
+      }
+      else if(grid[y][x] === "X"){
+        cell.textContent = "🚪";
+        cell.classList.add("exit");
+      }
+      else{
+        cell.textContent = "·";
+        cell.classList.add("floor");
+      }
+
+      mapEl.appendChild(cell);
+    }
+  }
+
+  document.getElementById("level").textContent =
+    "第 "+(level+1)+" 層";
+
+  document.getElementById("hp").textContent = hp;
+  document.getElementById("enemies").textContent = enemies.length;
+}
+
+// 判斷格子能否通行
+function canWalk(x,y){
+  if(y<0 || y>=grid.length) return false;
+  if(x<0 || x>=grid[y].length) return false;
+  return grid[y][x] !== "#";
+}
+
+// 玩家移動
+function move(dx,dy){
+  if(gameOver) return;
+
+  const nx = player.x + dx;
+  const ny = player.y + dy;
+
+  // 邊界或牆壁不可通過
+  if(!canWalk(nx,ny)){
+    say("前方是牆壁，換一條路吧！");
+    return;
+  }
+
+  // 攻擊敵人
+  const enemy = enemies.find(e => e.x===nx && e.y===ny);
+
+  if(enemy){
+    enemy.hp--;
+
+    if(enemy.hp<=0){
+      enemies = enemies.filter(e => e !== enemy);
+      say("⚔️ 成功打敗敵人！");
+    }else{
+      say("⚔️ 攻擊敵人！還需要攻擊 "+enemy.hp+" 次。");
+    }
+
+    enemyTurn();
+    render();
+    checkDefeat();
+    return;
+  }
+
+  player.x = nx;
+  player.y = ny;
+
+  // 回血泉：恢復 4 點生命，上限 10
+  const spring = springs.find(s => s.x===nx && s.y===ny);
+
+  if(spring){
+    const oldHp = hp;
+    hp = Math.min(10,hp+4);
+    springs = springs.filter(s => s !== spring);
+
+    say("♨️ 回血泉！恢復 "+(hp-oldHp)+" 點生命！");
+  }
+
+  // 抵達出口
+  if(grid[ny][nx] === "X"){
+    if(level < maps.length-1){
+      level++;
+      loadLevel();
+      say("🎉 通過上一層！歡迎來到第 "+(level+1)+" 層！");
+      return;
+    }else{
+      gameOver = true;
+      render();
+      say("🏆 恭喜通關！你征服了全部三層地下城！");
+      return;
+    }
+  }
+
+  enemyTurn();
+  render();
+  checkDefeat();
+}
+
+// 敵人行動
+function enemyTurn(){
+  if(gameOver) return;
+
+  for(const enemy of enemies){
+    const dx = player.x-enemy.x;
+    const dy = player.y-enemy.y;
+
+    // 相鄰時攻擊
+    if(Math.abs(dx)+Math.abs(dy)===1){
+      hp -= 1;
+
+      if(hp<=0){
+        hp = 0;
+        gameOver = true;
+        return;
+      }
+
+      continue;
+    }
+
+    // 優先選擇離玩家更近的方向
+    const steps = [
+      {x:0,y:-1},
+      {x:0,y:1},
+      {x:-1,y:0},
+      {x:1,y:0}
+    ];
+
+    steps.sort((a,b)=>{
+      const da =
+        Math.abs(player.x-(enemy.x+a.x))+
+        Math.abs(player.y-(enemy.y+a.y));
+
+      const db =
+        Math.abs(player.x-(enemy.x+b.x))+
+        Math.abs(player.y-(enemy.y+b.y));
+
+      return da-db;
+    });
+
+    for(const step of steps){
+      const nx = enemy.x+step.x;
+      const ny = enemy.y+step.y;
+
+      if(!canWalk(nx,ny)) continue;
+      if(grid[ny][nx] === "X") continue;
+
+      // 不可走到玩家所在格
+      if(player.x===nx && player.y===ny) continue;
+
+      // 不可與其他敵人重疊
+      if(enemies.some(e =>
+        e!==enemy && e.x===nx && e.y===ny
+      )) continue;
+
+      enemy.x = nx;
+      enemy.y = ny;
+      break;
+    }
+  }
+}
+
+// 檢查是否戰敗
+function checkDefeat(){
+  if(hp<=0){
+    hp = 0;
+    gameOver = true;
+    render();
+    say("💀 你被擊敗了！按「重新開始」再次挑戰。");
+  }
+}
+
+// 鍵盤操作：WASD、方向鍵
+document.addEventListener("keydown",function(event){
+  const key = event.key.toLowerCase();
+
+  const keys = {
+    "w":[0,-1],
+    "arrowup":[0,-1],
+    "s":[0,1],
+    "arrowdown":[0,1],
+    "a":[-1,0],
+    "arrowleft":[-1,0],
+    "d":[1,0],
+    "arrowright":[1,0]
+  };
+
+  if(keys[key]){
+    event.preventDefault();
+    move(keys[key][0],keys[key][1]);
+  }
+});
+
+// 啟動遊戲
+restartGame();
+</script>
+
+</body>
+</html>
